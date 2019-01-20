@@ -1,0 +1,148 @@
+---
+title: "Machine Learning"
+author: "vivi"
+date: "20 gennaio 2019"
+output: html_document
+---
+
+## Synopsis and Executive Summary
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity.  In this project; the data set is taken from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways.  http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har. The goal is to qualify how well they do it.
+
+
+### Data Exploration and Processing
+
+```{r, echo=FALSE,message=FALSE, warning=FALSE,echo=FALSE, results='hide'}
+rm(list = ls())
+try(dev.off())
+dev.set(2)
+plot.new()
+shell("cls")
+
+library(caret)
+library(randomForest)
+
+## SET working dir 
+work_dir<-"~/script_vecchi_coursera/machine_learning"
+if(!file.exists(work_dir)){dir.create(work_dir)}
+setwd("~/script_vecchi_coursera/machine_learning")
+if(!file.exists("data")){dir.create("data")}
+setwd("./data")
+
+## GET DATA
+url<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+url1<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+train_name<-"pml-training.csv"
+test_name<-"pml-testing.csv"
+#list.files(pattern = )
+if(!file.exists(train_name)){download.file(url, destfile = train_name)}
+if(!file.exists(test_name)){download.file(url1, destfile = test_name)}
+```
+
+Datataset is composed by 19622 observation vs 160 variable
+
+```{r,message=FALSE,warning=FALSE}
+setwd("~/script_vecchi_coursera/machine_learning/data")
+train <- read.csv("pml-training.csv",na.strings = c("NA",""))
+print("Size of the dataset:")
+dim(train)
+```
+
+
+##Data Cleaning
+
+I select only the variable that are numeric and don't contain NA
+
+```{r echo=FALSE}
+## Clean dataset
+tmp<-colSums(is.na(train))
+train<-train[,tmp==0]
+train<-train[,-c(1:7)]
+print("Size of the dataset:")
+dim(train)
+```
+The data set is split in traing (75%) and valdation (25%) set 
+
+
+```{r,message=FALSE,warning=FALSE}
+## Split the train set
+tmp<-createDataPartition(train$classe,p=0.75,list = FALSE)
+train_data<-train[tmp,]
+valid_data<-train[-tmp,]
+rm(url,url1,work_dir,test_name,train,tmp)
+```
+
+##Data exploration
+
+Plot the correlation matrix of the training data set.
+
+```{r,fig.height=8,fig.width=8,echo=FALSE, results='hide'}
+library(corrplot)
+cor_matrix<-abs(cor(train_data[,-53]))
+corrplot(cor_matrix,method="square",tl.cex=0.6)
+rm(cor_matrix)
+```
+
+By inspection of the plot are evidnet tha  variable that  are  correlated. PCA preprocessing, seem like to be a good option and also reduce the number of variable used to run the model.
+
+```{r,echo=FALSE, results='hide'}
+PCA_Comp<-prcomp(train_data[,-53],scale. = TRUE)
+std_dev <- PCA_Comp$sdev
+PCA_var <- std_dev^2
+var_ex <- PCA_var/sum(PCA_var)
+rm(PCA_var,std_dev)
+```
+99% of the variation is captured by 36 PC and there is a 32% reduction  in the size of dateset.
+
+```{r,fig.height=4,fig.width=6,echo=FALSE,message=FALSE}
+plot(cumsum(var_ex), xlab = "Number of Principal Component",ylab = "Cumulative Variance")
+abline(h=0.99,col='black',v=36)
+print("Varaince captured by 36 PC")
+sum(var_ex[1:36])
+rm(var_ex)
+```
+
+
+```{r, echo=FALSE}
+PCA_Comp<-preProcess(train_data,method = c("center","scale","pca"),thresh = 0.99)
+train_PCA<-predict(PCA_Comp,train_data)
+valid_PCA<-predict(PCA_Comp,valid_data)
+rm(train_data,valid_data)
+```
+
+##Model Building
+
+For model building, Random Forest algoritm is used over the data set preprocessed using PCA. doMParallel is used to parallelize the model creation.
+
+```{r,message=FALSE, warning=FALSE}
+gc() #garbage colletor
+library(doParallel)
+cl <- makePSOCKcluster(4)
+registerDoParallel(cl)
+
+model<-randomForest(classe ~ .,data = train_PCA,method = "rf")
+
+stopCluster(cl)
+
+valid_RF<-predict(model,newdata=valid_PCA)
+
+confusionMatrix(valid_RF,valid_PCA$classe)
+```
+
+## Model to test data
+Test data is cleaned and preprocessed has before. PCA is applied using the preprocessing model built on training data. The random forest model built on the training data is then applied on the test data to yield the results.
+
+```{r, message=FALSE,warning=FALSE}
+#final
+setwd("~/script_vecchi_coursera/machine_learning/data")
+test <- read.csv("pml-testing.csv",na.strings = c("NA",""))
+tmp<-colSums(is.na(test))
+test<-test[,tmp==0]
+test<-test[,-c(1:7)]
+dim(test)
+
+test_PCA<-predict(PCA_Comp,test)
+predict_test<-predict(model,test_PCA)
+predict_test
+```
+
